@@ -1,0 +1,190 @@
+---
+title: "Lab 1: Analyzing Voting Difficulty"
+subtitle: "Datasci 203"
+author: "Nicolas Aragon, Bella Davies, Andrew Main" 
+output:
+  bookdown::pdf_document2: 
+    fig_width: 5
+    fig_height: 4
+    fontsize: 10
+  toc: true
+number_sections: true
+urlcolor: blue
+---
+
+\newpage
+\setcounter{page}{1}
+
+```{r load packages and set options, include=FALSE}
+library(tidyverse) 
+library(magrittr)
+library(knitr)
+library(patchwork)
+library(stats)
+library(dplyr)
+library(ggplot2)
+
+theme_set(theme_bw())
+
+options(tinytex.verbose = TRUE)
+knitr::opts_chunk$set(echo=FALSE, message=FALSE)
+```
+
+```{r load data}
+anes <- read.csv('../Data/anes_pilot_2022_csv_20221214.csv')
+```
+
+# Introduction
+
+The analysis of the motivations of American voters has become increasingly complex and yet voter behavior seems consistent for the past 50 years. Notably, race has become much more visible as a factor that denotes social difference. The victories of Carter and Clinton and the defeat of Gore were marked by black voters creating marginal majorities in southern states. Whites support republican candidates by 47-43% while Blacks preference for democrats has increased from 57-19% to 84-7% (See Petrocik 2009, University of Missouri-Columbia). Ensuring that people are accurately represented by elected public officials has become increasingly relevant in today's political climate, where increased partisanship has resulted in hostility towards members of the other party and an unwillingness to compromise on important matters (see [Brooker](https://www.abhmuseum.org/voting-rights-for-blacks-and-poor-whites-in-the-jim-crow-south/) and [Beitsch](https://thehill.com/regulation/national-security/4932080-trump-allies-restrict-voting/)). As a first step in this analysis, we address the question: *Do Democratic voters or Republican voters experience more difficulty voting?* We approach the question via non parametric hypothesis tests over a ranking for the perceived difficulty to vote. The answer to this question could help validate concerns over equal access to voting in America and help legislators define policies to remedy the situation going forward.
+
+# Conceptualization and Operationalization:
+
+To further clarify this question so that it can be studied, the terms must be conceptualized and defined. Voters are U.S. citizens over the age of 18 who responded to a 2022 survey from [ANES](https://electionstudies.org). The groups of “Republican” and “Democrat” consist of voters who support either political party. There are a few variables in the ANES dataset that denote support for a party such as “pid1d”, “pid1r”, “pidstr”, and “pidlean”. These variables ask respondents which party they “think of themselves as closer to” and how strongly they lean in either direction. Among these alternatives, we chose the “pid_x” variable which represents “Party ID” because it is considered the most representative of which party was supported by the voters on the ballot rather than what voters “think of themselves as”. We made this decision to account for Americans who think of themselves as independent leaners, so that we can measure their support for either the Democrat (pid_x $\in [1:3]$) or Reuplican (pid_x $\in [5:7]$) party. Notably, we exclude "Independent voters" because they don't support either party (pid_x = 4).
+
+To conceptualize or define the term “difficulty voting” in the research question, variables such as ‘regdiff’, ‘waittime’, and ‘triptime’ were considered as these are all factors which can be correlated with difficulty voting. Additionally, ‘vharder 1-12’ includes further specific difficulties and complications that voters may experience that could be considered as they impact overall difficulty, such as location, transportation, time, weather, postage, etc. However, since the ‘votehard’ variable most directly represents the answer to the question “How difficult was it for you to vote?”, this variable will best conceptualize and define the phrase “voting difficulty” from the research question for this dataset. We remove 538 records to exclude independent voters or voters for which there is no data available for votehard.
+
+```{r data wrangling, echo=FALSE}
+
+# cat(nrow(anes), "rows originally \n") would show: 1585
+# We have 1585 rows and we'll remove records where there's no data for "votehard"
+# or where voters that don't meet our definition of republic or democrat
+# because they don't appear to favor either of these groups
+
+
+# Dropping Irrelevant Observations
+anes <- anes %>%
+  filter(pid_x != '4', !is.na(pid_x), votehard != -1)
+
+# cat(nrow(anes), "rows after dropping \n") would show: 1047
+# We've removed 538 records corresponding to lack of data for "votehard" or
+# no preference between republican or democrat
+
+# now we add a variable to label each record as democrat or republican
+
+# Creating column "d_or_r"
+anes <- anes %>%
+  mutate(d_or_r = case_when(
+    pid_x %in% c('1', '2', '3') ~ '0', # Democrats
+    pid_x %in% c('5', '6', '7') ~ '1', # Republicans
+  ))
+
+# Make table of counts and percentages of Democrats and Republicans
+party_counts <- anes %>%
+  group_by(d_or_r) %>%
+  summarise(count = n()) %>%
+  mutate(Party = ifelse(d_or_r == "0", "Democrats", "Republicans")) %>%
+  select(Party, count) %>%
+  mutate(Total = sum(count),
+         Percentage = (count / Total) * 100)  %>%
+  select(Party, count, Percentage)   # Select only the relevant columns
+
+totals <- data.frame(
+  Party = "Total",
+  count = sum(party_counts$count),
+  Percentage = 100
+)
+counts_with_percentages <- rbind(party_counts, totals)
+```
+
+# Data Wrangling & Data Understanding
+
+The data for this project came from the American National Election Studies (ANES). The ANES conducts surveys that are typically administered as in-person interviews in order to produce data on voting, public opinion, and political participation during most years of national elections. This dataset is the 2022 Pilot Study, which covered the 2022 midterm elections. Our study is focused on two key variables from the dataset: “votehard”  and “pid_x”. “votehard” is an ordinal variable that asks the respondents how difficult it was for them to vote, with six unique values ranging from “not difficult at all” to “extremely difficult”. This question was only asked of respondents who actually voted, excluding those that did not vote for one reason or another. Therefore, our analysis will exclude those who found it so difficult registering to vote in the first place that they were not able to vote. We believe a strong supporting analysis of registration difficulty by party would be an important factor to consider when thinking about the overall difficulty of voting under the current system. 
+
+For our analysis, we have grouped all strong and lean voters into their corresponding party. This is because literature has shown that even party “leaners” are partisan and treating them as independent is a misconception in the public discourse (Petrocik, 2009).  “pid_x”  is an ordinal variable that has respondents self-categorize into either “strong”, core (e.g, “Democrat”), or “lean” for both Democrats and Republicans. Since we are looking to compare only Democrats and Republicans as two different groups, we can group the leaners into the two categories without losing relevant information for our question of interest. To do this, we have grouped "1 = Strong Democrat", "2 = Democrat", and "3 = Lean Democrat" to be our full group of Democrats. We also grouped "5 = Lean Republican", "6 = Republican", and "7 = Strong Republican" to be our full group of Republicans. The survey also allows respondents to identify themselves as "4 = Independent". We remove voters who identify as independent and those who did not identify with any category, as they don’t offer information around the differences in voting difficulty between the two major parties. We also remove voters who selected “-1 = inapplicable, legitimate skip” for the variable “votehard” or voting difficulty, as this gives us no information about the relative ease or difficulty of voting for the respondent. After dropping these irrelevant observations, there are 1047 observations left out of 1585 originally as the chosen variables represent the majority of the survey dataset.
+
+As shown in Table 1, there are `r counts_with_percentages %>% filter(Party == "Democrats") %>% select(count) %>% pull()` self-identified Democrats and `r counts_with_percentages %>% filter(Party == "Republicans") %>% select(count) %>% pull()` self-identified Republicans, resulting in a `r counts_with_percentages %>% filter(Party == "Democrats") %>% select(Percentage) %>% pull() %>% round(2)`%-`r counts_with_percentages %>% filter(Party == "Republicans") %>% select(Percentage) %>% pull() %>% round(2)`% split. Using this information, we were able to conduct an initial analysis to show what proportion of each group felt that voting was or was not difficult, as seen in Figure 2. Percentages are plotted along the difficulty scale instead of counts because the sizes of the two groups are unequal, and proportions will provide a more representative visualization. From the histogram, we see that Democrats appear to experience more difficulty voting than Republicans. The hypotheses which follow will be based on this initial analysis, and further statistical testing will then be done to demonstrate whether or not one party has more difficulty voting than the other. 
+
+# Visuals
+
+
+```{r table, echo=FALSE}
+kable(counts_with_percentages, 
+      col.names = c("Party Affiliation", "Count", "Percentage"), 
+      format = "markdown",
+      caption = "Counts and Percentages of Democrats and Republicans")
+```
+
+```{r Voting Difficulty by Party ID (Percentage of Total Party), echo=FALSE, message=FALSE, warning=FALSE, fig.width=4, fig.height=2, fig.align='center'}
+# Since there are more Democrats than Republicans, we should compare voting difficulty by the percentage of each party at each level.
+# Calculate total counts for Democrats and Republicans
+democrat_totals <- nrow(anes[anes$d_or_r == "0", ])
+republican_totals <- nrow(anes[anes$d_or_r == "1", ])
+
+# Calculate proportions for both parties
+party_proportions <- anes %>%
+  group_by(votehard, d_or_r) %>%
+  summarise(count = n()) %>%
+  mutate(proportion = count / ifelse(d_or_r == "0", democrat_totals, republican_totals)) %>%
+  ungroup()
+
+# Plot the proportions
+ggplot(party_proportions, aes(x = factor(votehard), y = proportion, fill = d_or_r, position = "center")) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Figure 2: Voting Difficulty by Percentage of Total Party",
+       x = "Voting Difficulty",
+       y = "Percentage",
+       fill = "Party ID") +
+  scale_fill_manual(values = c("0" = "blue", "1" = "red"), 
+                    labels = c("0" = "Democrats", "1" = "Republicans")) +
+  scale_y_continuous(labels = scales::percent) +
+  theme_minimal(base_size=10) + 
+  theme (
+    plot.title = element_text(size = 10),
+    axis.title.x = element_text(size = 10),
+    axis.title.y = element_text(size = 10),
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 10)
+  )
+```
+
+
+# Hypothesis
+
+$H_0$: Democrats and Republicans experience the same amount of difficulty voting. 
+
+- $P(D < R) = P(D > R)$. The probability that a draw from Republicans will have more difficulty voting than a draw from Democrats is the same or equal to the probability that a draw from Democrats will have more difficulty voting than a draw from Republicans.
+
+$H_a$: Democrats and Republicans experience unequal amount of difficulty voting.
+
+- Two tailed: $P(D < R) \ne P(D > R)$. The probability that a draw from Republicans will have more difficulty voting than a draw from Democrats is not the same or unequal to the probability that a draw from Democrats will have more difficulty voting than a draw from Republicans. 
+- One tailed: $P(D < R) < P(D > R)$. The probability that a draw from Republicans will have more difficulty voting than a draw from Democrats is less than the probability that a draw from Democrats will have more difficulty voting than a draw from Republicans.
+
+# Test Selection and Evaluation of Assumptions
+
+We chose to use the Wilcoxon Rank-Sum test with the Hypothesis of Comparisons Version to evaluate our Hypothesis. Our data meets the key assumptions required for the test, namely that the data is ordinal and that it is Independent and Identically Distributed Data. Ordinal data means that the data has an order, and the variable of interest here, "votehard", is measured in ordered categories, "1 = Not difficult at all", "2 = A little difficult", "3 = Moderately difficult", "4 = Very difficult", and "5 = Extremely difficult". This scale represents an ordinal variable of the Likert scale. Data samples are also independent and identically distributed, since individual survey respondents are independent from each other, and both samples are drawn from the same distribution of U.S. citizens over the age of 18. 
+
+
+# Test Results and Interpretation
+
+```{r echo=FALSE}
+
+# perform wilcoxon ranked sum test:
+result <- wilcox.test(votehard ~ d_or_r, data=anes)
+```
+
+Voting difficulty is different across the two groups, with high statistical significance. We ran the Wilcoxon Rank Sum Test with the Hypothesis of Comparisons Version and found that the test results in a p-value of `r signif(result$p.value, digits=3)`. Because this value is less than 0.05, we reject our null hypothesis that "it's equally likely for a draw in one group to rank difficulty higher than the other group". This has high statistical significance according to the p-value.
+```{r echo=FALSE}
+# calculate the size of the effect.
+# We'll use a correlation coefficient to express effect size
+
+# first calculate total observations across both groups using Pearson's r
+sample_size_democrats <- counts_with_percentages %>% filter(Party == "Democrats") %>% select(count) %>% pull()
+sample_size_republicans <- counts_with_percentages %>% filter(Party == "Republicans") %>% select(count) %>% pull()
+n <- sample_size_democrats + sample_size_republicans
+
+# now extract z-statistic:
+z <- qnorm(result$p.value/2)
+
+# now calculate the effect size r:
+r <- z / sqrt(n)
+```
+The data shows that one of the two groups is more likely to rank difficulty higher than the other, but we're not yet declaring which group perceives higher difficulty. Notably, the effect size is `r round(r, 2)` which is considered "small" in the context of Pearson's r for a sample size of `r round(n, 2)` voters. The negative sign in the effect size indicates that the second group in the comparison tends to have larger values than the first group. The practical interpretation for a small effect size is that the difference may be subtle.
+
+```{r echo=FALSE}
+result <- wilcox.test(votehard ~ d_or_r, data=anes, alternative="greater")
+```
+
+Since the initial two-sided test shows that the two groups are not equal with high statistical significance, we wanted to then further understand which of the parties experienced more increased difficulty. We hypothesize that democrats have a higher ranking of difficulty than republicans and proceed to use the one-tailed alternate hypothesis stated above. We observe a p-value of `r signif(result$p.value, digits=3)`, which is less than 0.05. It seems there is a higher probability that Democrats have more difficulty voting than Republicans, with high statistical significance. This answers our research question.
+
+[//]: # Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
